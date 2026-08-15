@@ -1,0 +1,85 @@
+name: Repair quiz payload
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Find valid payload and rebuild index
+        run: |
+          python3 - <<'PY'
+          import base64, gzip, itertools, pathlib, sys
+
+          root = pathlib.Path('.')
+          def read(name):
+              return ''.join((root/name).read_text(encoding='utf-8').split())
+
+          fixed = {
+              '02': read('part02.txt'),
+              '03': read('part03.txt'),
+              '04': read('part04.txt'),
+              '06': read('part06.txt'),
+              '07': read('part07.txt'),
+              '09': read('part09.txt'),
+          }
+          alts = {
+              '01': [('part01.txt', read('part01.txt')), ('p01.txt', read('p01.txt'))],
+              '05': [('part05.txt', read('part05.txt')), ('p05.txt', read('p05.txt'))],
+              '08': [('part08.txt', read('part08.txt')), ('p08.txt', read('p08.txt'))],
+          }
+
+          def decode_b64(s):
+              # tolerate omitted final padding, but not invalid characters
+              if len(s) % 4 == 1:
+                  raise ValueError('invalid base64 length')
+              s += '=' * ((4 - len(s) % 4) % 4)
+              return base64.b64decode(s, validate=True)
+
+          attempts=[]
+          for a,b,c in itertools.product(alts['01'], alts['05'], alts['08']):
+              names=(a[0],b[0],c[0])
+              payload=a[1]+fixed['02']+fixed['03']+fixed['04']+b[1]+fixed['06']+fixed['07']+c[1]+fixed['09']
+              attempts.append((names,len(payload),len(payload)%4))
+              try:
+                  raw=decode_b64(payload)
+                  html=gzip.decompress(raw)
+                  text=html.decode('utf-8')
+                  if '<html' in text.lower() and '军队文职' in text:
+                      pathlib.Path('index.html').write_text(text,encoding='utf-8')
+                      pathlib.Path('_payload_repair_status.txt').write_text(
+                          'SUCCESS\n组合: '+', '.join(names)+'\nBase64长度: '+str(len(payload))+'\nHTML字节: '+str(len(html))+'\n',
+                          encoding='utf-8')
+                      print('SUCCESS',names,len(payload),len(html))
+                      sys.exit(0)
+              except Exception as e:
+                  print('FAIL',names,len(payload),len(payload)%4,type(e).__name__,str(e)[:120])
+
+          pathlib.Path('_payload_repair_status.txt').write_text(
+              'FAILED\n'+'\n'.join(map(str,attempts))+'\n',encoding='utf-8')
+          raise SystemExit('No payload combination passed gzip/html validation')
+          PY
+
+      - name: Commit rebuilt full site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add index.html _payload_repair_status.txt
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Rebuild full quiz site from validated payload"
+            git push
+          fi
