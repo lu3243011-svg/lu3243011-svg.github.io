@@ -1,0 +1,40 @@
+name: Diagnose payload shards
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Hash shard slices
+        run: |
+          python3 - <<'PY'
+          import pathlib, hashlib
+          def read(n): return ''.join(pathlib.Path(n).read_text().split())
+          def gitsha(s): return hashlib.sha1((f'blob {len(s)}\0').encode()+s.encode()).hexdigest()
+          for n in ['part01.txt','p01.txt','part05.txt','p05.txt','part08.txt','p08.txt','part09.txt']:
+              s=read(n)
+              print(n,'len=',len(s),'sha=',gitsha(s),'head=',s[:24],'tail=',s[-24:])
+          s=read('part09.txt')
+          print('--- part09 slices at 19641 ---')
+          for i in range(0,len(s),19641):
+              x=s[i:i+19641]
+              print(i//19641+1,'offset',i,'len',len(x),'sha',gitsha(x),'head',x[:20],'tail',x[-20:])
+          print('--- diff positions ---')
+          for a,b in [('part05.txt','p05.txt'),('part08.txt','p08.txt'),('part01.txt','p01.txt')]:
+              x,y=read(a),read(b)
+              pre=0
+              while pre<min(len(x),len(y)) and x[pre]==y[pre]: pre+=1
+              suf=0
+              while suf<min(len(x)-pre,len(y)-pre) and x[-1-suf]==y[-1-suf]: suf+=1
+              print(a,b,'prefix_same',pre,'suffix_same',suf,'lens',len(x),len(y))
+              print('A around',x[max(0,pre-20):pre+40])
+              print('B around',y[max(0,pre-20):pre+40])
+          PY
